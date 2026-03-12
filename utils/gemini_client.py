@@ -305,49 +305,132 @@ class GeminiClient:
 
         raise RuntimeError("이미지 생성 응답에서 이미지 데이터를 찾을 수 없습니다. 모델이 이미지 생성을 지원하는지 확인하세요.")
 
-    # ─── TTS (음성 생성) ───────────────────────────────────────────────────
+    # ─── TTS 단일 청크 호출 ────────────────────────────────────────────────
+    def _tts_single_chunk(self, client, tts_model: str, text: str, voice: str) -> bytes:
+        """청크 하나에 대한 TTS 호출. PCM bytes 반환."""
+        import io, wave
+        from google.genai import types
+
+        response = client.models.generate_content(
+            model=tts_model,
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=voice,
+                        )
+                    )
+                ),
+            ),
+        )
+        part = response.candidates[0].content.parts[0]
+        audio_data = part.inline_data.data
+        mime_type = part.inline_data.mime_type or ""
+
+        # WAV 컨테이너면 PCM 프레임만 추출
+        if "wav" in mime_type.lower():
+            buf = io.BytesIO(audio_data)
+            with wave.open(buf, "rb") as wf:
+                return wf.readframes(wf.getnframes()), wf.getframerate(), wf.getnchannels(), wf.getsampwidth()
+        # 이미 raw PCM
+        return audio_data, 24000, 1, 2  # 24kHz, mono, 16-bit 기본값
+
+    # ─── TTS (음성 생성) — 단건 ───────────────────────────────────────────
     def generate_tts(
         self,
         text: str,
         voice: str = "Kore",
-        speed: float = 1.0,
-        split: bool = True,
+        split: bool = False,
         output_path: str = "output/audio.wav",
     ) -> str:
+        """짧은 텍스트 단건 생성 (목소리 테스트용)."""
         from google import genai as google_genai
-        from google.genai import types
+        import wave
 
         os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
-
         client = google_genai.Client(api_key=self.api_key)
         tts_model = self.config.get("gemini", {}).get("tts_model", "gemini-2.5-flash-preview-tts")
 
-        # 500자 분할
-        chunks = [text[i:i+500] for i in range(0, len(text), 500)] if split else [text]
+        pcm, sample_rate, channels, sampwidth = self._tts_single_chunk(client, tts_model, text, voice)
 
-        all_audio = b""
-        for chunk in chunks:
-            response = client.models.generate_content(
-                model=tts_model,
-                contents=chunk,
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice,
-                            )
-                        )
-                    ),
-                ),
-            )
-            audio_data = response.candidates[0].content.parts[0].inline_data.data
-            all_audio += audio_data
-
-        with open(output_path, "wb") as f:
-            f.write(all_audio)
+        with wave.open(output_path, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sampwidth)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm)
 
         return output_path
+
+    # ─── TTS (음성 생성) — 청크 분할 + 진행률 콜백 ──────────────────────
+    def generate_tts_chunked(
+        self,
+        text: str,
+        voice: str = "Kore",
+        chunk_size: int = 500,
+        output_path: str = "output/audio.wav",
+        progress_callback=None,
+    ) -> str:
+        """긴 텍스트를 chunk_size 단위로 분할 생성 후 단일 WAV로 합칩니다."""
+        from google import genai as google_genai
+        import wave
+
+        os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
+        client = google_genai.Client(api_key=self.api_key)
+        tts_model = self.config.get("gemini", {}).get("tts_model", "gemini-2.5-flash-preview-tts")
+
+        # 문장 단위로 자르되 chunk_size 이하로 묶기 (단어 중간 잘림 방지)
+        chunks = self._split_text_smart(text, chunk_size)
+        total = len(chunks)
+
+        all_pcm = b""
+        wav_params = None  # (channels, sampwidth, rate)
+
+        for i, chunk in enumerate(chunks):
+            if progress_callback:
+                progress_callback(i, total, f"청크 {i + 1} / {total} 생성 중... ({len(chunk)}자)")
+            pcm, rate, ch, sw = self._tts_single_chunk(client, tts_model, chunk, voice)
+            all_pcm += pcm
+            if wav_params is None:
+                wav_params = (ch, sw, rate)
+
+        if progress_callback:
+            progress_callback(total, total, "WAV 파일 저장 중...")
+
+        channels, sampwidth, sample_rate = wav_params or (1, 2, 24000)
+        with wave.open(output_path, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sampwidth)
+            wf.setframerate(sample_rate)
+            wf.writeframes(all_pcm)
+
+        return output_path
+
+    @staticmethod
+    def _split_text_smart(text: str, chunk_size: int) -> list[str]:
+        """chunk_size 이하로 문장/줄 단위 분할 (단어 중간 잘림 방지)."""
+        # 줄 단위로 먼저 묶기
+        lines = text.split("\n")
+        chunks = []
+        current = ""
+        for line in lines:
+            candidate = (current + "\n" + line).strip() if current else line
+            if len(candidate) <= chunk_size:
+                current = candidate
+            else:
+                if current:
+                    chunks.append(current)
+                # 줄 자체가 chunk_size 초과면 강제 분할
+                if len(line) > chunk_size:
+                    for i in range(0, len(line), chunk_size):
+                        chunks.append(line[i:i + chunk_size])
+                    current = ""
+                else:
+                    current = line
+        if current:
+            chunks.append(current)
+        return [c for c in chunks if c.strip()]
 
     # ─── 썸네일 문구 추출 ─────────────────────────────────────────────────
     def extract_thumbnail_phrases(self, script: str) -> list[str]:

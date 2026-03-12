@@ -10,6 +10,9 @@ google-genai>=1.0.0
 # ElevenLabs TTS (선택)
 elevenlabs>=1.0.0
 
+# MP3 → WAV 변환 (ElevenLabs TTS 병합용, 선택)
+pydub>=0.25.0
+
 # 영상 합성
 moviepy>=1.0.3
 
