@@ -1,0 +1,25 @@
+# 유튜브 롱폼 자동 제작 도구 - 패키지 목록
+
+# UI
+streamlit>=1.30.0
+
+# Gemini API (대본 생성 + 이미지 생성 + TTS)
+google-generativeai>=0.8.0
+google-genai>=1.0.0
+
+# ElevenLabs TTS (선택)
+elevenlabs>=1.0.0
+
+# 영상 합성
+moviepy>=1.0.3
+
+# 이미지 처리
+Pillow>=10.0.0
+
+# 설정 파일 파싱
+pyyaml>=6.0
+
+# YouTube Data API v3
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.0

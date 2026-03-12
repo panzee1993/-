@@ -1,0 +1,13 @@
+{
+  "name": "실사 사진",
+  "description": "실제 사진처럼 사실적인 이미지. 다큐멘터리 느낌.",
+  "base_prompt": "photorealistic, documentary photography style, natural lighting, high resolution, detailed textures, professional photography",
+  "negative_prompt": "illustration, cartoon, painting, unrealistic, blurry",
+  "image_size": "1792x1024",
+  "style_keywords": [
+    "photorealistic",
+    "documentary",
+    "natural lighting",
+    "high resolution"
+  ]
+}

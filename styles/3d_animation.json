@@ -1,0 +1,14 @@
+{
+  "name": "3D 애니메이션",
+  "description": "픽사/디즈니 스타일의 3D 렌더링 이미지. 부드럽고 선명한 3D 캐릭터.",
+  "base_prompt": "3D animation style, Pixar-like rendering, smooth surfaces, vibrant colors, cinematic lighting, high quality 3D render",
+  "negative_prompt": "2D, flat, sketch, rough, realistic photo",
+  "image_size": "1792x1024",
+  "style_keywords": [
+    "3D render",
+    "Pixar style",
+    "smooth",
+    "vibrant",
+    "cinematic"
+  ]
+}

@@ -1,0 +1,53 @@
+# 유튜브 롱폼 자동 제작 도구 - 설정 파일
+# API 키를 여기에 입력하세요
+
+api:
+  # Google Gemini API 키 (대본 생성 + 이미지 생성 + TTS)
+  gemini_api_key: ""
+
+  # ElevenLabs API 키 (고품질 한국어 TTS, 선택)
+  elevenlabs_api_key: ""
+
+  # YouTube Data API v3 (Google Cloud Console에서 OAuth 설정 후 client_secret.json 다운로드)
+  youtube_client_secret_path: "client_secret.json"
+
+# Gemini 모델 설정
+gemini:
+  script_model: "gemini-2.5-flash"        # 대본 생성 모델
+  image_model: "gemini-2.0-flash-exp"     # 이미지 생성 모델
+  tts_model: "gemini-2.5-flash-preview-tts"  # TTS 모델
+
+# TTS 기본 설정
+tts:
+  default_engine: "gemini"     # "gemini" 또는 "elevenlabs"
+  default_voice: "Kore"        # Gemini 기본 한국어 음성
+  default_speed: 1.0           # 음성 속도 (1.0 ~ 1.5)
+
+# 영상 설정
+video:
+  fps: 24
+  codec: "libx264"
+  resolution:
+    width: 1920
+    height: 1080
+
+# 자막 기본 설정
+subtitle:
+  fontsize: 75
+  color: "white"
+  stroke_color: "black"
+  stroke_width: 2
+  position: "bottom"
+
+# 스크립트 스타일 가이드
+script:
+  max_chars_per_line: 200      # 한 줄 최대 글자 수
+  min_chars_per_line: 100      # 한 줄 최소 글자 수
+  max_lines: 150               # 최대 줄 수
+  chars_per_minute: 385        # 분당 평균 글자 수
+
+# YouTube 업로드 기본값
+youtube:
+  default_privacy: "private"   # "private", "unlisted", "public"
+  default_category_id: "22"    # 22 = People & Blogs
+  made_for_kids: false

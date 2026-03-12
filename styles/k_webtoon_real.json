@@ -1,0 +1,14 @@
+{
+  "name": "K웹툰 실사",
+  "description": "한국 웹툰 스타일의 실사 느낌 이미지. 선명한 윤곽선, 드라마틱한 조명.",
+  "base_prompt": "Korean webtoon realistic style, dramatic lighting, detailed line art with realistic textures, cinematic composition, vibrant colors, high detail",
+  "negative_prompt": "blurry, low quality, cartoon, anime, flat colors",
+  "image_size": "1792x1024",
+  "style_keywords": [
+    "K-webtoon",
+    "semi-realistic",
+    "dramatic shadows",
+    "cinematic",
+    "detailed"
+  ]
+}
