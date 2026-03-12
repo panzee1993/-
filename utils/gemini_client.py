@@ -176,77 +176,134 @@ class GeminiClient:
         self,
         script: str,
         style: str = "K웹툰 실사",
+        style_prompt: str = "",
         characters: str = "",
+        target_count: int = None,
     ) -> list[dict]:
-        char_info = f"\n캐릭터 정보: {characters}" if characters else ""
+        lines = [l for l in script.split("\n") if l.strip()]
+        line_count = len(lines)
 
-        prompt = f"""
-다음 스크립트를 장면 단위로 분할하고, 각 장면에 대한 이미지 생성 프롬프트를 만들어 줘.
+        # 목표 장면 수 결정 (지정 없으면 5줄당 1장면)
+        if target_count and target_count > 0:
+            scene_count_guide = f"정확히 {target_count}개 장면으로 분할해 줘."
+        else:
+            auto_count = max(5, min(30, line_count // 5))
+            scene_count_guide = f"약 {auto_count}개 장면으로 분할해 줘 (스크립트 길이 기준 자동 결정)."
 
-이미지 스타일: {style}
-{char_info}
+        char_section = f"\n[캐릭터 정보 — 이미지 프롬프트에 반드시 반영]\n{characters}\n" if characters.strip() else ""
+
+        style_desc = style_prompt if style_prompt else style
+
+        prompt = f"""너는 유튜브 영상 제작 전문가야.
+아래 스크립트를 장면 단위로 분할하고, 각 장면에 대한 이미지 생성 프롬프트를 만들어 줘.
+
+{scene_count_guide}
+{char_section}
+[이미지 스타일]
+{style_desc}
 
 [스크립트]
-{script[:5000]}
+{script[:6000]}
 
-[출력 형식 - JSON 배열]
+[장면 분할 규칙]
+1. 하나의 장면 = 같은 공간·시간·상황이 지속되는 나레이션 묶음 (보통 3~6줄)
+2. 나레이션이 전환되거나 새로운 사건·장소가 나오면 새 장면으로 분리
+3. narration 필드에는 해당 장면의 나레이션 전체를 그대로 포함 (줄바꿈 포함)
+
+[image_prompt 작성 규칙]
+- 반드시 영어로 작성
+- 스타일 키워드를 프롬프트 앞에 붙일 것: "{style_desc[:60]}, ..."
+- 장면의 시각적 상황을 구체적으로 묘사: 인물, 배경, 조명, 분위기, 카메라 앵글
+- 캐릭터가 있으면 외형 묘사를 포함
+- 50~100 단어 분량으로 상세하게
+- 텍스트(글자)를 이미지에 넣지 말 것
+
+[출력 형식 — 순수 JSON만 출력, 주석 없음]
 [
   {{
     "scene_number": 1,
-    "narration": "장면 나레이션 텍스트",
-    "image_prompt": "영어로 된 이미지 생성 프롬프트 (스타일 포함)"
-  }},
-  ...
+    "narration": "장면 나레이션 텍스트 (원문 그대로)",
+    "image_prompt": "Detailed English image generation prompt here...",
+    "mood": "dramatic / calm / tense / uplifting 중 하나"
+  }}
 ]
 
-JSON만 출력해 줘. 다른 텍스트 없이.
-"""
+반드시 유효한 JSON만 출력해 줘. 코드 블록(```)이나 설명 텍스트 없이."""
 
         response = self.model.generate_content(prompt)
         raw = response.text.strip()
 
-        # JSON 파싱
-        raw = re.sub(r"```json\n?", "", raw)
-        raw = re.sub(r"```\n?", "", raw)
+        # 코드 블록 제거
+        raw = re.sub(r"```json\s*", "", raw)
+        raw = re.sub(r"```\s*", "", raw)
+        # 앞뒤 공백 제거 후 JSON 시작 위치 찾기
+        start = raw.find("[")
+        end = raw.rfind("]") + 1
+        if start != -1 and end > start:
+            raw = raw[start:end]
 
         try:
             scenes = json.loads(raw)
+            # 필수 필드 보정
+            for i, scene in enumerate(scenes):
+                scene.setdefault("scene_number", i + 1)
+                scene.setdefault("narration", "")
+                scene.setdefault("image_prompt", "")
+                scene.setdefault("mood", "neutral")
+                scene.pop("image_path", None)  # 이전 경로 초기화
+            return scenes
         except json.JSONDecodeError:
-            # 파싱 실패 시 단순 분할로 대체
-            lines = [l for l in script.split("\n") if l.strip()]
-            scenes = [
-                {
-                    "scene_number": i + 1,
-                    "narration": line,
-                    "image_prompt": f"{style} style illustration of: {line[:100]}",
-                }
-                for i, line in enumerate(lines[:30])
-            ]
-
-        return scenes
+            # 파싱 완전 실패 시 스크립트를 균등 분할
+            chunk_size = max(3, line_count // (target_count or max(5, line_count // 5)))
+            scenes = []
+            for i in range(0, line_count, chunk_size):
+                chunk_lines = lines[i:i + chunk_size]
+                narration = "\n".join(chunk_lines)
+                scenes.append({
+                    "scene_number": len(scenes) + 1,
+                    "narration": narration,
+                    "image_prompt": f"{style_desc}, cinematic scene illustration of: {narration[:80]}",
+                    "mood": "neutral",
+                })
+            return scenes
 
     # ─── 이미지 생성 ───────────────────────────────────────────────────────
-    def generate_image(self, prompt: str, scene_index: int, output_dir: str = "output") -> str:
+    def generate_image(
+        self,
+        prompt: str,
+        scene_index: int,
+        output_dir: str = "output",
+        aspect_ratio: str = "16:9",
+    ) -> str:
+        from google import genai as google_genai
+        from google.genai import types
+
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, f"scene_{scene_index:03d}.png")
 
-        image_model_name = self.config.get("gemini", {}).get("image_model", "gemini-2.0-flash-exp")
-        image_model = self._genai.GenerativeModel(image_model_name)
+        client = google_genai.Client(api_key=self.api_key)
+        image_model = self.config.get("gemini", {}).get("image_model", "gemini-2.0-flash-exp")
 
-        response = image_model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "image/png"},
+        # Gemini 2.0 Flash 이미지 생성 (IMAGE 모달리티)
+        response = client.models.generate_content(
+            model=image_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+            ),
         )
 
-        # 이미지 데이터 추출 및 저장
         for part in response.candidates[0].content.parts:
-            if hasattr(part, "inline_data") and part.inline_data:
-                img_data = base64.b64decode(part.inline_data.data)
+            if part.inline_data is not None:
+                img_data = part.inline_data.data
+                # bytes 또는 base64 문자열 모두 처리
+                if isinstance(img_data, str):
+                    img_data = base64.b64decode(img_data)
                 with open(output_path, "wb") as f:
                     f.write(img_data)
                 return output_path
 
-        raise RuntimeError("이미지 생성 응답에서 이미지 데이터를 찾을 수 없습니다.")
+        raise RuntimeError("이미지 생성 응답에서 이미지 데이터를 찾을 수 없습니다. 모델이 이미지 생성을 지원하는지 확인하세요.")
 
     # ─── TTS (음성 생성) ───────────────────────────────────────────────────
     def generate_tts(
