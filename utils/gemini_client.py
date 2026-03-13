@@ -472,33 +472,104 @@ class GeminiClient:
         style: str = "실사 + 임팩트 텍스트",
         size: str = "16:9 (유튜브 기본)",
         output_path: str = "output/thumbnail.jpg",
+        ref_image_bytes: bytes = None,
+        ref_image_mime: str = "image/jpeg",
     ) -> str:
+        from google import genai as google_genai
+        from google.genai import types
+
         os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
         ratio = "16:9" if "16:9" in size else "9:16"
-        prompt = f"""
-Create a YouTube thumbnail image.
-Style: {style}
-Ratio: {ratio}
-Main text overlay: "{main_text}"
-Sub text: "{sub_text}"
-Requirements: Eye-catching, high contrast, professional YouTube thumbnail design,
-dramatic lighting, Korean YouTube style, bold impactful composition.
-"""
 
-        image_model_name = self.config.get("gemini", {}).get("image_model", "gemini-2.0-flash-exp")
-        image_model = self._genai.GenerativeModel(image_model_name)
+        STYLE_PROMPT = {
+            "실사 + 임팩트 텍스트": "photorealistic, cinematic lighting, high contrast, dramatic",
+            "K웹툰 실사": "Korean webtoon realistic style, vibrant colors, detailed linework",
+            "충격적인 얼굴 클로즈업": "extreme close-up face, shocked expression, photorealistic, dramatic lighting",
+            "다큐멘터리 스타일": "documentary photography, gritty realism, cinematic, historical",
+            "일러스트": "digital illustration, vivid bold colors, graphic design style",
+        }
+        style_desc = STYLE_PROMPT.get(style, style)
 
-        response = image_model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "image/jpeg"},
+        text_block = f'Main overlay text on image: "{main_text}"'
+        if sub_text:
+            text_block += f'\nSub text (smaller): "{sub_text}"'
+
+        prompt = (
+            f"Create a YouTube thumbnail. Aspect ratio: {ratio}. "
+            f"Style: {style_desc}. {text_block}. "
+            "Requirements: bold impactful composition, eye-catching, high contrast, "
+            "professional Korean YouTube style, dramatic lighting, vivid colors. "
+            "Text must be large and clearly readable."
+        )
+
+        client = google_genai.Client(api_key=self.api_key)
+        image_model = self.config.get("gemini", {}).get("image_model", "gemini-2.0-flash-exp")
+
+        # 참조 이미지가 있으면 멀티모달 입력
+        if ref_image_bytes:
+            contents = [
+                types.Part.from_bytes(data=ref_image_bytes, mime_type=ref_image_mime),
+                prompt,
+            ]
+        else:
+            contents = prompt
+
+        response = client.models.generate_content(
+            model=image_model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+            ),
         )
 
         for part in response.candidates[0].content.parts:
-            if hasattr(part, "inline_data") and part.inline_data:
-                img_data = base64.b64decode(part.inline_data.data)
+            if part.inline_data is not None:
+                img_data = part.inline_data.data
+                if isinstance(img_data, str):
+                    img_data = base64.b64decode(img_data)
                 with open(output_path, "wb") as f:
                     f.write(img_data)
                 return output_path
 
-        raise RuntimeError("썸네일 이미지 생성에 실패했습니다.")
+        raise RuntimeError(
+            "썸네일 이미지 생성에 실패했습니다. 모델 응답에 이미지 데이터가 없습니다."
+        )
+
+    # ─── 유튜브 메타데이터 생성 ────────────────────────────────────────────
+    def generate_youtube_metadata(
+        self,
+        script: str,
+        topic: str = "",
+    ) -> dict:
+        """대본에서 유튜브 제목·설명·태그를 AI로 생성."""
+        topic_line = f"주제: {topic}\n" if topic else ""
+        prompt = f"""너는 유튜브 채널 운영 전문가야.
+아래 대본을 기반으로 유튜브 업로드에 필요한 메타데이터를 만들어 줘.
+
+{topic_line}[대본 (처음 600자)]
+{script[:600]}
+
+[출력 규칙]
+- title: 클릭률 높은 제목, 30자 이내, 이모지 1~2개 포함
+- description: 영상 내용 요약 3~4줄, 마지막 줄에 해시태그 5개 (줄바꿈으로 구분)
+- tags: 관련 키워드 10개 배열 (한국어)
+
+반드시 아래 JSON 형식만 출력해 줘 (코드블록·설명 없이):
+{{
+  "title": "...",
+  "description": "...",
+  "tags": ["태그1", "태그2", ...]
+}}"""
+        response = self.model.generate_content(prompt)
+        raw = response.text.strip()
+        raw = re.sub(r"```json\s*", "", raw)
+        raw = re.sub(r"```\s*", "", raw)
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start != -1 and end > start:
+            raw = raw[start:end]
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {"title": "", "description": "", "tags": []}
